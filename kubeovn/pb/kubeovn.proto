@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package kubeovn;
+option go_package = "./";
+
+service NetworkService {
+  rpc CreateVPC(CreateVPCRequest) returns (CreateVPCResponse) {}
+  rpc CreateSubnet(CreateSubnetRequest) returns (CreateSubnetResponse) {}
+}
+
+message CreateVPCRequest {
+  string name = 1;
+  repeated string namespaces = 2;
+}
+
+message CreateVPCResponse {
+  string message = 1;
+}
+
+message CreateSubnetRequest {
+  string name = 1;
+  string vpc_name = 2;
+  string cidr_block = 3;
+  string gateway = 4;
+  string protocol = 5;
+}
+
+message CreateSubnetResponse {
+  string message = 1;
+}
