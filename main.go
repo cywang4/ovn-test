@@ -2,46 +2,87 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 
-	"ovn-test/kubeovn/pb"
-
 	"google.golang.org/grpc"
-)
 
-// ... (保留 NetworkManager 结构体以及所有方法)
+	"path/filepath"
+
+	pb "github.com/cywang4/ovn-test/kubeovn/pb"
+
+	ovnv1 "github.com/kubeovn/kube-ovn/pkg/apis/kubeovn/v1"
+	ovnv1client "github.com/kubeovn/kube-ovn/pkg/client/clientset/versioned"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/clientcmd"
+)
 
 type server struct {
 	pb.UnimplementedNetworkServiceServer
-	networkManager *NetworkManager
+	Client *ovnv1client.Clientset
+}
+
+func NewServer(kubeconfigPath string) (*server, error) {
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build config: %w", err)
+	}
+
+	clientset, err := ovnv1client.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	return &server{Client: clientset}, nil
 }
 
 func (s *server) CreateVPC(ctx context.Context, req *pb.CreateVPCRequest) (*pb.CreateVPCResponse, error) {
-	err := s.networkManager.CreateVPC(req.Name, req.Namespaces)
-	if err != nil {
-		return nil, err
+	vpc := &ovnv1.Vpc{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: req.Name,
+		},
+		Spec: ovnv1.VpcSpec{
+			Namespaces: req.Namespaces,
+		},
 	}
-	return &pb.CreateVPCResponse{Message: "VPC created successfully."}, nil
+
+	_, err := s.Client.KubeovnV1().Vpcs().Create(context.TODO(), vpc, metav1.CreateOptions{})
+	if err != nil {
+		return &pb.CreateVPCResponse{Status: "Failure", Error: err.Error()}, nil
+	}
+
+	return &pb.CreateVPCResponse{Status: "Success"}, nil
 }
 
 func (s *server) CreateSubnet(ctx context.Context, req *pb.CreateSubnetRequest) (*pb.CreateSubnetResponse, error) {
-	err := s.networkManager.CreateSubnet(req.Name, req.VpcName, req.CidrBlock, req.Gateway, req.Protocol)
-	if err != nil {
-		return nil, err
+	subnet := &ovnv1.Subnet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: req.Name,
+		},
+		Spec: ovnv1.SubnetSpec{
+			Vpc:       req.VpcName,
+			CIDRBlock: req.CidrBlock,
+			Gateway:   req.Gateway,
+			Protocol:  req.Protocol,
+		},
 	}
-	return &pb.CreateSubnetResponse{Message: "Subnet created successfully."}, nil
+
+	_, err := s.Client.KubeovnV1().Subnets().Create(context.TODO(), subnet, metav1.CreateOptions{})
+	if err != nil {
+		return &pb.CreateSubnetResponse{Status: "Failure", Error: err.Error()}, nil
+	}
+
+	return &pb.CreateSubnetResponse{Status: "Success"}, nil
 }
 
 func main() {
-	// ... (保留 NewNetworkManager 函数)
+	kubeconfigPath := filepath.Join("/Users/walker.wang", ".kube", "ovn-test")
 
-	networkManager, err := NewNetworkManager(kubeconfigPath)
+	s, err := NewServer(kubeconfigPath)
 	if err != nil {
-		log.Fatalf("Error creating Network Manager: %v", err)
+		log.Fatalf("Error creating server: %v", err)
 	}
-
-	s := &server{networkManager: networkManager}
 
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {
@@ -50,7 +91,7 @@ func main() {
 	grpcServer := grpc.NewServer()
 	pb.RegisterNetworkServiceServer(grpcServer, s)
 
-	log.Printf("Starting gRPC server on %s", lis.Addr())
+	log.Println("Server is running on port :50051")
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}
